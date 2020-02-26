@@ -1,0 +1,347 @@
+void call() {
+    echo 'Please call the required function such as utils.shortGitCommit() or utils.verifyMap()'
+}
+
+public String shortGitCommit(String commitID){
+    try{
+        if(verifySHA1(commitID)){
+            return commitID[0..10]
+        }else{
+            error "Invalid commitID provided: ${commitID}"
+        }
+    } catch(e) {
+        echo "Unable to short git commit: ${commitID} , Error: ${e}"
+        error "Unable to short git commit"
+    }
+}
+
+public boolean verifySHA1(String hash){
+    // SHA-1 has a 160 bits digest
+    // 160 bits rendered is 160 / 8 = 20 bytes.
+    // 20 bytes rendered in hexadecimal format has a length of 40 chars (digits), two chars for each byte. Digits can be [0-9a-f]
+    // Thanks to https://stackoverflow.com/a/43112901
+    if ( hash  ==~ /^[0-9a-f]{40}$/){
+        return true
+    }else{
+        return false
+    }
+}
+
+public boolean verifyMap(Map defaultMap, Map toVerifyMap){
+    echo "Verifying input parameters: ${toVerifyMap}, against accepted parameters: ${defaultMap}"
+
+    isMapVerified = true
+    def missingKeys = ""
+    try{
+        defaultMap.each{ 
+            k, v -> if ( !toVerifyMap.containsKey(k)){
+                    isMapVerified = false
+                    missingKeys = "${missingKeys} ${k}"
+                }
+                // This check that breaks string interpolation and makes things not very user friendly
+                //else if(toVerifyMap[k].getClass() != v.getClass()) {
+                //    isMapVerified = false
+                //    missingKeys = "${missingKeys} ${k} is not a instance of ${v.getClass()} ,"
+                //}
+                else if ( toVerifyMap[k] == null || "${toVerifyMap[k]}".size() == 0 ) {
+                    isMapVerified = false
+                    missingKeys = "${missingKeys} ${k}"
+                    defaultMap[k]=toVerifyMap[k]
+                }else{
+                    defaultMap[k]=toVerifyMap[k]
+                }
+        }
+    }catch(e){
+        echo "error parsing through the Provided map, Error: ${e}"
+        error "unable to verify provided maps"
+    }
+
+    if (isMapVerified){
+        echo "All mandatory parameter's values provided: ${defaultMap}"
+        return true
+    }else{
+        echo "Missing mandatory parameter's ${missingKeys}"
+        return false
+    }
+}
+
+public String tmpDir() {
+    try {
+        def dirName = UUID.randomUUID().toString()
+        echo "creating temp dir ${dirName}"
+        def tmpDir = sh(script: "mkdir ${dirName} && cd ${dirName} && pwd && cd ..", returnStdout: true).trim()
+        return tmpDir
+    }
+    catch(e) {
+        error "unable to create temp dir, Error: ${e}"
+    }
+}
+
+public String getValueFromKeyInFile( String file, String parameter) {
+    // Currently only works for files with key=value but could be expanded for other delimiters
+    if ( fileExists(file) ) {
+        // delete commented out lines and take the last entry in case there are duplicates from grep
+        String val = sh(
+                script:"sed \'/^#/d\' ${file} | grep ${parameter} | tail -n 1 | cut -d '=' -f2-",
+                returnStdout:true)
+
+        if (val.length() > 0) {
+            return val.trim()
+        }
+    }
+
+    // We could not find the parameter, so return an empty string
+    return ''
+}
+
+public String repositoryType( String repository ) {
+    if ( repository.contains('bitbucket.sgp.dbs.com')) {
+        return pipelineGlobals.git()
+    } else if (repository.contains('svnedge.sgp.dbs.com')) {
+        return pipelineGlobals.svn()
+    } else if (repository.contains('svnedge2.sgp.dbs.com')) {
+        return pipelineGlobals.svn()
+    }
+
+    error ( "Unrecognised repository ${repository}!" )
+}
+
+public String buildDuration() {
+    //currentBuild.duration is in milliseconds
+    int minutes = currentBuild.duration.intdiv(1000*60)
+    int seconds = currentBuild.duration.mod(1000*60)/1000
+    return "${minutes}mins:${seconds}secs"
+}
+
+public String determineBitbucketRepoName() {
+    return scm.getUserRemoteConfigs()[0].getUrl().tokenize('/').last().split("\\.")[0]
+}
+
+public String determineBitbucketProjectName() {
+    return scm.getUserRemoteConfigs()[0].getUrl().split("/")[-2].toUpperCase()
+}
+
+public String NexusPublishName() {
+    return 'NEXUS PUBLISH'
+}
+
+public String sonarScanName() {
+    return 'SONAR SCAN'
+}
+
+public String getUrlFromBitbucketBuildStatus(String commitID, String bbKey) {
+	def url = ""
+	def bbURL = pipelineGlobals.bitbucketProdUrl() + "/rest/build-status/1.0/commits/${commitID}"
+	
+	try{
+	    bbResult = httpRequest url: bbURL, authentication: getCredentials.git()
+	}catch(e){
+	    error "getUrlFromBitbucketBuildStatus: error fetching Bitbucket build status for commit: ${commitID}, Error: ${e}"
+	}
+
+	try{
+	    parseResult = readJSON text: bbResult.content
+
+	    for (value in parseResult.values){
+	        if (bbKey.equals(value.key)) {
+	            if (value.state == "SUCCESSFUL") {
+	            	url = value.url
+	            } 
+	        }
+	    }
+	}catch(e){
+	    error "Error parsing through bitbucket result, Error: ${e}"
+	}
+	return url
+}
+
+public String determineFileType(String fileName) {
+	//Raw type is . for maven
+	String fileType = "."	
+	    if(fileName.endsWith('.tar.gz')) {
+            fileType='tar.gz'
+        } else if(fileName.endsWith('.tar.bz2')) {
+            fileType='tar.bz2'
+        } else if(fileName.lastIndexOf(".") != -1) {
+			fileType = fileName.substring(fileName.lastIndexOf(".") + 1 )
+		}
+	return fileType
+}
+
+public String twoDecimal(double value) {
+    return twoDecimal(value + "")
+}
+
+public String twoDecimal(String value) {
+	value = (value.contains("."))? value + "00" : value
+    return (value.contains("."))? value.substring(0, value.indexOf(".") + 3 ) : value
+}
+
+public String encodeHTML(String value) {
+    return value.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+}
+
+public String humanReadibleFileSize(double value){
+	def units = [ " B" , " KB",  " MB", " GB" , " TB"]
+	def counter = 0
+	while(value > 1024){
+		value /= 1024.0
+		counter++
+	}
+	return twoDecimal(value) + units[counter]
+}
+
+public String getPODName(){
+    echo "Generating POD name for openshift slave"
+    try{
+        def job_name =  (env.JOB_NAME.length() < 48 ) ? env.JOB_NAME : env.JOB_NAME[0..47]
+        def podName = "${job_name}-${BUILD_NUMBER}".replaceAll("[^a-zA-Z0-9]+","-")
+        return podName
+    }catch(e){
+        echo "Oops.!, There was an exception creating POD name"
+        error "Error: ${e}"
+    }	
+}
+
+public Map getRestResponse(String urlString, String credential){
+	echo "utils.getRestResponse: ${urlString}"
+	def object = [:]
+	try {
+		def result = httpRequest url:urlString,
+								quiet: true,
+								authentication:credential
+		object = readJSON text:result.content					 
+	} catch (Exception ex) {
+		error "Error when attempting to make API Call: " + ex.toString()
+	}
+	return object
+}
+
+public String performRestCall(String urlString, String httpModeString, String parameter, String credential){
+	def responseCode = ""
+	try {
+		def response = httpRequest url:urlString,
+					httpMode: httpModeString,
+					contentType: 'APPLICATION_JSON',
+					quiet: true,
+					requestBody: parameter,
+                    authentication:credential
+		responseCode = response.status
+	} catch (Exception ex) {
+		error "Error when attempting to make API Call: " + ex.toString()
+	}
+	return responseCode
+}
+
+public String getAppConfig(String env, String branchName="", String countryCode="" ){
+    echo "utils.getAppConfig called with env: ${env}, branchName: ${branchName}, countryCode: ${countryCode}"
+    def countryConfig, appData
+    def countryCodes = pipelineGlobals.getCountryCodes()
+    def appEnv = pipelineGlobals.getAppEnv()
+
+    try{
+        if (countryCode == "" && branchName != ""){
+            if (countryCodes.contains(branchName[0..1].toLowerCase()) && branchName[2] == "-"){
+                countryConfig = branchName[0..1].toLowerCase()
+            }
+        }else if (countryCode != "" && countryCodes.contains(countryCode)){
+            countryConfig = countryCode
+        }else if (countryCode != "" && !countryCodes.contains(countryCode)){
+            error "Invalid countryCode provided. ${countryCode}"
+        }
+    }catch(e){
+        error "unable to get countryCode, Error: ${e}"
+    }
+
+    try{
+        appData = readYaml file: 'config.yaml'
+
+        if (countryCodes.contains(countryConfig)){
+            appData << appData.get(countryConfig,[:])
+            for (country in countryCodes){
+                appData.remove(country)
+            }
+        }
+
+        if(appEnv.contains(env)){
+            appData << appData.get(env,[:])
+            for (en in appEnv){
+                appData.remove(en)
+            }
+        }else{
+            error "invalid App environment provided, env:${env}"
+        }
+
+    }catch(e){
+        error "Unbale to read config from config.yaml, Error: ${e}"
+    }
+    
+    return appData
+
+}
+
+public List getSkipStages(Map stageMap, String application, List skipStages = [] ){
+    echo "utils.getSkipStages called with stageMap: ${stageMap}, skipStages: ${skipStages} "
+    def stageList = stageMap.keySet() as List
+    echo "Stages defined : ${stageList}"
+
+    def mandatoryStages = pipelineGlobals.getMandatoryDevStages(application)
+    
+    if ((skipStages instanceof List) && skipStages.size() > 0 ){
+        echo "These stages will be skipped: ${skipStages}"
+        for (i = 0; i < skipStages.size(); i++) {
+            if ( mandatoryStages.contains(skipStages[i]) ){
+                echo "${skipStages[i]} is a mandatory stage, cannot skip this stage"
+            }else if(stageList.contains(skipStages[i])){
+                stageMap[skipStages[i]] = false
+            }else{
+                error "Stage ${skipStages[i]} not found in predefined stages: ${stageMap}"
+            }
+        }
+    }else if (!skipStages instanceof List){
+        error "skipStages has to be instance of list, accepted default vlaue '[]''"
+    }else{
+        echo "No stages to skip, Executing complete pipeline"
+    }
+
+    return stageMap
+
+}
+
+public void publishReport(reportHTML="", reportName="", reportFile="", reportDir=""){
+    echo "utils.publishReport called with reportName: ${reportName}, reportFile: ${reportFile}, reportDir: ${reportDir}, reportHTML.length(): ${reportHTML.length()}"
+	reportDir = reportDir ?: tmpDir()
+	sh "mkdir -p ${reportDir}"
+    try{
+        if ( reportHTML?.trim() && reportName?.trim() ){
+            
+            reportFile = "${reportName.replaceAll("[^a-zA-Z0-9]+","_")}.html"
+            writeFile file: "${reportDir}/${reportFile}", text: reportHTML
+        }else if ( reportFile?.trim() && reportName?.trim() ){
+            echo "Using reportFile: ${reportDir}/${reportFile} to generate report"
+        }else{
+            error "Invalid reportName: ${reportName} or reportFile: ${reportFile} or reportHTML: ${reportHTML}, "
+        }
+        println "Publishing ${reportName}"
+        publishHTML target: [
+            allowMissing         : false,
+            alwaysLinkToLastBuild: false,
+            keepAll              : true,
+            reportDir            : reportDir,
+            reportFiles          : reportFile,
+            reportName           : reportName
+        ]
+    } catch(e) {
+        echo " unexpected error: ${e}"
+        error "error publishing HTML report for ${reportName}"
+    }
+}
+
+public String combineMapAsString(Map props){
+	String propStr = ""
+	 props.each { k, v ->
+		propStr += "${k}=${v}\n"
+    }
+	//Remove final line break
+	return propStr[0..-2]
+}
